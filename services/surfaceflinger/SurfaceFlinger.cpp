@@ -462,6 +462,9 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     property_get("debug.sf.dim_in_gamma_in_enhanced_screenshots", value, 0);
     mDimInGammaSpaceForEnhancedScreenshots = atoi(value);
 
+    property_get("debug.sf.defer_refresh_rate_when_off", value, "0");
+    mDeferRefreshRateWhenOff = atoi(value);
+
     mIgnoreHwcPhysicalDisplayOrientation =
             base::GetBoolProperty("debug.sf.ignore_hwc_physical_display_orientation"s, false);
 
@@ -1216,6 +1219,12 @@ void SurfaceFlinger::setDesiredActiveMode(display::DisplayModeRequest&& request,
     const auto display = getDisplayDeviceLocked(displayId);
     if (!display) {
         ALOGW("%s: display is no longer valid", __func__);
+        return;
+    }
+
+    if (mDeferRefreshRateWhenOff && display->getPowerMode() == hal::PowerMode::OFF) {
+        ALOGI("%s: deferring because display is powered off", __func__);
+        mLastActiveMode = request.mode;
         return;
     }
 
@@ -5551,6 +5560,11 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
         }
 
         getHwComposer().setPowerMode(displayId, mode);
+        if (mLastActiveMode) {
+            ALOGI("Deferred active mode change pending, applying now");
+            setDesiredActiveMode({mLastActiveMode.value()}, true);
+            mLastActiveMode = std::nullopt;
+        }
         if (displayId == mActiveDisplayId && mode != hal::PowerMode::DOZE_SUSPEND) {
             const bool enable =
                     mScheduler->getVsyncSchedule(displayId)->getPendingHardwareVsyncState();
